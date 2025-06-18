@@ -21,10 +21,7 @@ app = Flask(__name__)
 # Daftar alamat (origin) yang kita percayai untuk terhubung ke backend ini.
 # Alamat ini HARUS alamat frontend Anda, bukan backend.
 origins = [
-    "http://localhost:3000",  # Untuk development di komputer Anda
-    # GANTI URL INI dengan URL publik FRONTEND Next.js Anda di Railway.
-    # CONTOH: "https://my-nextjs-app.up.railway.app"
-    "https://web-production-4700.up.railway.app"
+    "https://face-recognition-attendance-mx7j.vercel.app/"
 ]
 # Inisialisasi CORS dengan daftar origin yang benar dan spesifik
 CORS(app, resources={r"/*": {"origins": origins}}, supports_credentials=True)
