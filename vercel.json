@@ -1,0 +1,13 @@
+{
+  "builds": [
+    {
+      "src": "api/*.py", // Sesuaikan jika API Anda tidak di folder 'api' atau menggunakan file lain
+      "use": "@vercel/python",
+      "config": {
+        "maxLambdaSize": "50mb", // Dlib dan modelnya besar, naikkan batas ukuran lambda
+        "runtime": "python3.9"   // **Penting**: Gunakan Python 3.9 atau 3.10. Python 3.12 mungkin belum memiliki roda (wheel) dlib pre-built yang stabil, memaksa kompilasi.
+      }
+    }
+  ],
+  "installCommand": "sudo apt-get update && sudo apt-get install -y cmake build-essential && pip install --disable-pip-version-check -r requirements.txt"
+}
