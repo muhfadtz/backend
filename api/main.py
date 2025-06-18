@@ -24,7 +24,7 @@ origins = [
     "https://face-recognition-attendance-mx7j.vercel.app/"
 ]
 # Inisialisasi CORS dengan daftar origin yang benar dan spesifik
-CORS(app, resources={r"/*": {"origins": origins}}, supports_credentials=True)
+CORS(app, resources={r"*": {"origins": origins}}, supports_credentials=True)
 
 
 # --- Menangani Preflight Request (OPTIONS) secara manual ---
