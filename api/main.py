@@ -7,7 +7,6 @@ import numpy as np
 import os
 import face_recognition
 import bcrypt
-
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from dotenv import load_dotenv
@@ -30,6 +29,7 @@ DB_HOST = os.getenv("DB_HOST")
 DB_PORT = os.getenv("DB_PORT")
 DB_NAME = os.getenv("DB_NAME")
 
+
 def get_db_connection():
     try:
         conn = psycopg2.connect(
@@ -44,6 +44,7 @@ def get_db_connection():
     except psycopg2.Error as e:
         app.logger.error(f"Error connecting to PostgreSQL: {e}")
         return None
+
 
 # --- Fungsi pemrosesan gambar ---
 def process_image_for_face_recognition(base64_string):
@@ -75,7 +76,7 @@ def process_image_for_face_recognition(base64_string):
         app.logger.error(f"Error in image processing: {e}", exc_info=True)
         return None, str(e)
 
-# --- API Endpoint: Absensi ---
+
 @app.route('/attendance', methods=['POST', 'OPTIONS'])
 def attendance():
     if request.method == 'OPTIONS':
@@ -109,9 +110,7 @@ def attendance():
             cursor.execute("SELECT nip, nama, face_embedding FROM \"Karyawan\" WHERE face_embedding IS NOT NULL")
             rows = cursor.fetchall()
 
-            known_encodings = []
-            known_nips = []
-            known_names = []
+            known_encodings, known_nips, known_names = [], [], []
 
             for row in rows:
                 try:
@@ -127,8 +126,8 @@ def attendance():
 
             matches = face_recognition.compare_faces(known_encodings, current_encoding, tolerance=0.5)
             distances = face_recognition.face_distance(known_encodings, current_encoding)
-
             best_match_index = np.argmin(distances)
+
             if matches[best_match_index]:
                 return jsonify({
                     'message': 'Face recognized',
@@ -145,7 +144,7 @@ def attendance():
         if 'conn' in locals() and conn and not conn.closed:
             conn.close()
 
-# --- API Endpoint: Register wajah ---
+
 @app.route('/register-face', methods=['POST', 'OPTIONS'])
 def register_face():
     if request.method == 'OPTIONS':
@@ -162,19 +161,25 @@ def register_face():
             return jsonify({'error': error}), 400
 
         face_locations = face_recognition.face_locations(image_cv2)
+        app.logger.info(f"Jumlah wajah terdeteksi: {len(face_locations)}")
+
         if len(face_locations) != 1:
             return jsonify({'error': 'Harap gunakan foto dengan 1 wajah saja'}), 400
 
-        encoding = face_recognition.face_encodings(image_cv2, face_locations)[0]
+        encodings = face_recognition.face_encodings(image_cv2, face_locations)
+        if not encodings:
+            return jsonify({'error': 'Gagal melakukan encoding wajah. Pastikan wajah terlihat jelas dan format gambar sesuai'}), 400
+
+        encoding = encodings[0]
         encoding_list = [float(x) for x in encoding]
 
         return jsonify({'face_encoding': encoding_list, 'message': 'Face encoded successfully'}), 200
 
     except Exception as e:
         app.logger.error(f"Register-face error: {e}", exc_info=True)
-        return jsonify({'error': 'Internal server error'}), 500
+        return jsonify({'error': f'Register-face gagal: {str(e)}'}), 500
 
-# --- API Endpoint: Login ---
+
 @app.route('/api/login', methods=['POST', 'OPTIONS'])
 def login():
     if request.method == 'OPTIONS':
@@ -210,12 +215,12 @@ def login():
     finally:
         conn.close()
 
-# --- API Endpoint: Health check ---
+
 @app.route('/health', methods=['GET'])
 def health_check():
     return jsonify({'status': 'OK'}), 200
 
-# --- Main ---
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
