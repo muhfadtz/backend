@@ -179,7 +179,7 @@ def register_face():
         app.logger.error(f"Flask error di /register-face: {str(e)}")
         return jsonify({'error': f'Flask error: {str(e)}'}), 500
 
-@app.route('/api/login', methods=['POST'])
+@app.route('api/login', methods=['POST'])
 def login():
     data = request.get_json()
     email = data.get('email')
