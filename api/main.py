@@ -16,27 +16,16 @@ load_dotenv()
 
 app = Flask(__name__)
 
-# List of allowed origins (frontend URLs)
+# --- [KONFIGURASI CORS] ---
+# Daftar URL frontend yang diizinkan untuk terhubung
 origins = [
     "https://facerecognition-attendance-production.up.railway.app",
-    "https://face-recognition-attendance-mx7j-9t2fva34u.vercel.app"
+    "https://face-recognition-attendance-mx7j-9t2fva34u.vercel.app",
+    "http://localhost:3000" # Tambahkan ini untuk development lokal
 ]
-
-# Allow CORS for credentials and custom origins
 CORS(app, resources={r"/*": {"origins": origins}}, supports_credentials=True)
 
-# Tambahkan header CORS ke semua response
-@app.after_request
-def add_cors_headers(response):
-    origin = request.headers.get('Origin')
-    if origin in origins:
-        response.headers['Access-Control-Allow-Origin'] = origin
-        response.headers['Access-Control-Allow-Credentials'] = 'true'
-        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
-        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
-    return response
-
-# Konfigurasi database
+# --- [DATABASE CONNECTION] ---
 DB_USER = os.getenv("DB_USER")
 DB_PASS = os.getenv("DB_PASS")
 DB_HOST = os.getenv("DB_HOST")
@@ -55,103 +44,166 @@ def get_db_connection():
         )
         return conn
     except psycopg2.Error as e:
-        print(f"Error connecting to PostgreSQL: {e}")
+        app.logger.error(f"Error connecting to PostgreSQL: {e}")
         return None
+
+# --- [FUNGSI PEMROSESAN GAMBAR UTAMA] ---
+def process_image_for_face_recognition(base64_string):
+    """
+    Fungsi terpusat untuk memproses gambar dari string base64.
+    Menerapkan perbaikan untuk padding, konversi warna (RGBA -> BGR), dan resize.
+    Mengembalikan objek gambar yang siap untuk face recognition atau (None, error_message).
+    """
+    # 1. Perbaiki padding base64 jika ada yang kurang
+    missing_padding = len(base64_string) % 4
+    if missing_padding:
+        base64_string += '=' * (4 - missing_padding)
+    
+    # 2. Dekode string base64 menjadi data gambar
+    try:
+        image_data = base64.b64decode(base64_string)
+    except base64.binascii.Error as e:
+        app.logger.error(f"Base64 decoding failed: {e}")
+        return None, "Invalid base64 string provided."
+
+    np_arr = np.frombuffer(image_data, np.uint8)
+    
+    # 3. Muat gambar dengan mempertahankan channel aslinya (untuk deteksi RGBA)
+    image_cv2 = cv2.imdecode(np_arr, cv2.IMREAD_UNCHANGED)
+    if image_cv2 is None:
+        return None, "Invalid image data, could not be decoded."
+
+    # 4. Konversi gambar 4-channel (RGBA) ke 3-channel (BGR)
+    try:
+        if image_cv2.shape[2] == 4:
+            app.logger.info("4-channel image detected, converting to BGR...")
+            image_cv2 = cv2.cvtColor(image_cv2, cv2.COLOR_BGRA2BGR)
+    except IndexError:
+        # Gambar sudah grayscale, tidak perlu konversi
+        app.logger.info("Grayscale image detected.")
+        pass
+
+    # 5. Resize gambar untuk menghemat memori dan mempercepat proses
+    MAX_WIDTH = 800
+    height, width, *_ = image_cv2.shape
+    if width > MAX_WIDTH:
+        ratio = MAX_WIDTH / float(width)
+        new_height = int(height * ratio)
+        image_cv2 = cv2.resize(image_cv2, (MAX_WIDTH, new_height), interpolation=cv2.INTER_AREA)
+        app.logger.info(f"Image resized to {MAX_WIDTH}x{new_height}")
+        
+    return image_cv2, None
+
+# --- [ENDPOINTS API] ---
 
 @app.route('/attendance', methods=['POST', 'OPTIONS'])
 def attendance():
     if request.method == 'OPTIONS':
-        return '', 200
+        return jsonify(success=True), 200
 
     data = request.get_json()
     if not data or 'image' not in data:
         return jsonify({'error': 'No image provided'}), 400
+        
     try:
+        # Proses gambar menggunakan fungsi terpusat
         image_b64 = data['image'].split(',')[-1]
-        image_data = base64.b64decode(image_b64)
-        np_arr = np.frombuffer(image_data, np.uint8)
-        image_cv2 = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
-        if image_cv2 is None:
-            return jsonify({'error': 'Invalid image data'}), 400
+        image_cv2, error = process_image_for_face_recognition(image_b64)
+        if error:
+            return jsonify({'error': error}), 400
 
+        # Lanjutkan dengan face recognition
         current_face_locations = face_recognition.face_locations(image_cv2)
         if not current_face_locations:
-            return jsonify({'error': 'No face detected in image'}), 404
+            return jsonify({'error': 'No face detected in the image'}), 404
 
         current_face_encodings = face_recognition.face_encodings(image_cv2, current_face_locations)
         if not current_face_encodings:
-            return jsonify({'error': 'Encoding failed'}), 400
+            return jsonify({'error': 'Failed to create face encoding'}), 400
 
         current_face_encoding = current_face_encodings[0]
         conn = get_db_connection()
         if conn is None:
             return jsonify({'error': 'Database connection failed'}), 503
 
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
-        cursor.execute("SELECT nip, nama, face_embedding FROM \"Karyawan\" WHERE face_embedding IS NOT NULL")
-        rows = cursor.fetchall()
+        with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+            cursor.execute("SELECT nip, nama, face_embedding FROM \"Karyawan\" WHERE face_embedding IS NOT NULL")
+            rows = cursor.fetchall()
 
-        known_encodings = []
-        known_nips = []
-        known_names = []
+            known_encodings = []
+            known_nips = []
+            known_names = []
 
-        for row in rows:
-            try:
-                encoding = np.array([float(x) for x in row['face_embedding'].strip('[]').split(',')])
-                known_encodings.append(encoding)
-                known_nips.append(row['nip'])
-                known_names.append(row['nama'])
-            except:
-                continue
+            for row in rows:
+                try:
+                    encoding = np.array([float(x) for x in row['face_embedding'].strip('[]').split(',')])
+                    known_encodings.append(encoding)
+                    known_nips.append(row['nip'])
+                    known_names.append(row['nama'])
+                except (ValueError, AttributeError):
+                    app.logger.warning(f"Skipping invalid embedding for NIP {row.get('nip', 'N/A')}")
+                    continue
+            
+            if not known_encodings:
+                 return jsonify({'error': 'No known faces found in database to compare with'}), 404
 
-        matches = face_recognition.compare_faces(known_encodings, current_face_encoding, tolerance=0.5)
-        distances = face_recognition.face_distance(known_encodings, current_face_encoding)
+            matches = face_recognition.compare_faces(known_encodings, current_face_encoding, tolerance=0.5)
+            distances = face_recognition.face_distance(known_encodings, current_face_encoding)
 
-        if not distances.any():
-            return jsonify({'error': 'No known faces to compare'}), 500
+            if len(distances) == 0:
+                return jsonify({'error': 'Face distance calculation failed'}), 500
 
-        best_match_index = np.argmin(distances)
-        if matches[best_match_index]:
-            return jsonify({
-                'message': 'Face recognized',
-                'name': known_names[best_match_index],
-                'nip': known_nips[best_match_index]
-            }), 200
-        else:
-            return jsonify({'error': 'Face not recognized'}), 404
+            best_match_index = np.argmin(distances)
+            if matches[best_match_index]:
+                return jsonify({
+                    'message': 'Face recognized',
+                    'name': known_names[best_match_index],
+                    'nip': known_nips[best_match_index]
+                }), 200
+            else:
+                return jsonify({'error': 'Face not recognized'}), 404
+
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        app.logger.error(f"An unexpected error occurred in /attendance: {e}", exc_info=True)
+        return jsonify({'error': f'An internal server error occurred: {str(e)}'}), 500
+    finally:
+        if 'conn' in locals() and conn:
+            conn.close()
 
 @app.route('/register-face', methods=['POST', 'OPTIONS'])
 def register_face():
     if request.method == 'OPTIONS':
-        return '', 200
+        return jsonify(success=True), 200
 
     data = request.get_json()
     if not data or 'nip' not in data or 'fotoWajah' not in data:
         return jsonify({'error': 'Missing NIP or fotoWajah'}), 400
+        
     try:
+        # Gunakan kembali fungsi pemrosesan gambar yang sudah robust
         image_b64 = data['fotoWajah'].split(',')[-1]
-        image_data = base64.b64decode(image_b64)
-        np_arr = np.frombuffer(image_data, np.uint8)
-        image_cv2 = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+        image_cv2, error = process_image_for_face_recognition(image_b64)
+        if error:
+            return jsonify({'error': error}), 400
 
         face_locations = face_recognition.face_locations(image_cv2)
         if not face_locations:
             return jsonify({'error': 'No face detected'}), 400
         if len(face_locations) > 1:
-            return jsonify({'error': 'Multiple faces detected'}), 400
+            return jsonify({'error': 'Multiple faces detected, please use a photo with one face'}), 400
 
         encoding = face_recognition.face_encodings(image_cv2, face_locations)[0]
         encoding_list = [float(x) for x in encoding]
         return jsonify({'face_encoding': encoding_list, 'message': 'Face encoded successfully'}), 200
+        
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        app.logger.error(f"An unexpected error occurred in /register-face: {e}", exc_info=True)
+        return jsonify({'error': f'An internal server error occurred: {str(e)}'}), 500
 
 @app.route('/api/login', methods=['POST', 'OPTIONS'])
 def login():
     if request.method == 'OPTIONS':
-        return '', 200
+        return jsonify(success=True), 200
 
     data = request.get_json()
     email = data.get('email')
@@ -165,24 +217,31 @@ def login():
     conn = get_db_connection()
     if conn is None:
         return jsonify({"error": "Database connection error"}), 503
+        
     try:
-        cursor = conn.cursor()
-        cursor.execute("SELECT nama, password FROM public.\"Karyawan\" WHERE email = %s", (email,))
-        row = cursor.fetchone()
-        if row:
-            nama, hashed_password = row
-            if bcrypt.checkpw(password.encode(), hashed_password.encode()):
-                return jsonify({"message": "Login berhasil", "role": "user", "nama": nama}), 200
-        return jsonify({"message": "Email atau password salah"}), 401
+        with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+            cursor.execute("SELECT nama, password FROM public.\"Karyawan\" WHERE email = %s", (email,))
+            row = cursor.fetchone()
+            if row and row['password']:
+                # --- [PERBAIKAN] Pastikan kedua argumen adalah bytes ---
+                hashed_password = row['password'].encode('utf-8') if isinstance(row['password'], str) else row['password']
+                if bcrypt.checkpw(password.encode('utf-8'), hashed_password):
+                    return jsonify({"message": "Login berhasil", "role": "user", "nama": row['nama']}), 200
+            
+            return jsonify({"message": "Email atau password salah"}), 401
+            
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        app.logger.error(f"An unexpected error occurred in /api/login: {e}", exc_info=True)
+        return jsonify({"error": f"An internal server error occurred: {str(e)}"}), 500
     finally:
-        cursor.close()
-        conn.close()
+        if conn:
+            conn.close()
 
 @app.route('/health', methods=['GET'])
 def health_check():
     return jsonify({'status': 'OK'}), 200
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    # port diatur oleh environment variable PORT di Railway, atau 5000 jika dijalankan lokal
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug=True)
