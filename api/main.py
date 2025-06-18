@@ -21,7 +21,7 @@ app = Flask(__name__)
 origins = [
     "http://localhost:3000/",  # Alamat untuk development lokal di komputer Anda
     # Ganti URL placeholder di bawah ini dengan URL PUBLIK FRONTEND Anda di Railway
-    "https://absensi-frontend-production.up.railway.app/" 
+    "https://face-recognition-attendance-mx7j.vercel.app/" 
 ]
 
 # Konfigurasi Database - Akan membaca DATABASE_URL
