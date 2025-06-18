@@ -1,8 +1,10 @@
 flask
 flask-cors
 face_recognition
+dlib==19.24    # <--- TAMBAHKAN BARIS INI
 opencv-python-headless
 numpy
 python-dotenv
 bcrypt
 psycopg2-binary
+gunicorn
