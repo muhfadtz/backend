@@ -7,6 +7,7 @@ import numpy as np
 import os
 import face_recognition
 import bcrypt
+
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from dotenv import load_dotenv
@@ -29,7 +30,6 @@ DB_HOST = os.getenv("DB_HOST")
 DB_PORT = os.getenv("DB_PORT")
 DB_NAME = os.getenv("DB_NAME")
 
-
 def get_db_connection():
     try:
         conn = psycopg2.connect(
@@ -45,7 +45,6 @@ def get_db_connection():
         app.logger.error(f"Error connecting to PostgreSQL: {e}")
         return None
 
-
 # --- Fungsi pemrosesan gambar ---
 def process_image_for_face_recognition(base64_string):
     try:
@@ -55,28 +54,27 @@ def process_image_for_face_recognition(base64_string):
 
         image_data = base64.b64decode(base64_string)
         np_arr = np.frombuffer(image_data, np.uint8)
-        image_cv2 = cv2.imdecode(np_arr, cv2.IMREAD_UNCHANGED)
 
+        image_cv2 = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
         if image_cv2 is None:
             return None, "Image decoding failed"
 
-        if len(image_cv2.shape) == 3 and image_cv2.shape[2] == 4:
-            image_cv2 = cv2.cvtColor(image_cv2, cv2.COLOR_BGRA2BGR)
+        image_rgb = cv2.cvtColor(image_cv2, cv2.COLOR_BGR2RGB)
 
         MAX_WIDTH = 800
-        height, width = image_cv2.shape[:2]
+        height, width = image_rgb.shape[:2]
         if width > MAX_WIDTH:
             ratio = MAX_WIDTH / float(width)
             new_height = int(height * ratio)
-            image_cv2 = cv2.resize(image_cv2, (MAX_WIDTH, new_height), interpolation=cv2.INTER_AREA)
+            image_rgb = cv2.resize(image_rgb, (MAX_WIDTH, new_height), interpolation=cv2.INTER_AREA)
 
-        return image_cv2, None
+        return image_rgb, None
 
     except Exception as e:
         app.logger.error(f"Error in image processing: {e}", exc_info=True)
         return None, str(e)
 
-
+# --- API Endpoint: Absensi ---
 @app.route('/attendance', methods=['POST', 'OPTIONS'])
 def attendance():
     if request.method == 'OPTIONS':
@@ -110,7 +108,9 @@ def attendance():
             cursor.execute("SELECT nip, nama, face_embedding FROM \"Karyawan\" WHERE face_embedding IS NOT NULL")
             rows = cursor.fetchall()
 
-            known_encodings, known_nips, known_names = [], [], []
+            known_encodings = []
+            known_nips = []
+            known_names = []
 
             for row in rows:
                 try:
@@ -126,8 +126,8 @@ def attendance():
 
             matches = face_recognition.compare_faces(known_encodings, current_encoding, tolerance=0.5)
             distances = face_recognition.face_distance(known_encodings, current_encoding)
-            best_match_index = np.argmin(distances)
 
+            best_match_index = np.argmin(distances)
             if matches[best_match_index]:
                 return jsonify({
                     'message': 'Face recognized',
@@ -144,7 +144,7 @@ def attendance():
         if 'conn' in locals() and conn and not conn.closed:
             conn.close()
 
-
+# --- API Endpoint: Register wajah ---
 @app.route('/register-face', methods=['POST', 'OPTIONS'])
 def register_face():
     if request.method == 'OPTIONS':
@@ -161,25 +161,19 @@ def register_face():
             return jsonify({'error': error}), 400
 
         face_locations = face_recognition.face_locations(image_cv2)
-        app.logger.info(f"Jumlah wajah terdeteksi: {len(face_locations)}")
-
         if len(face_locations) != 1:
             return jsonify({'error': 'Harap gunakan foto dengan 1 wajah saja'}), 400
 
-        encodings = face_recognition.face_encodings(image_cv2, face_locations)
-        if not encodings:
-            return jsonify({'error': 'Gagal melakukan encoding wajah. Pastikan wajah terlihat jelas dan format gambar sesuai'}), 400
-
-        encoding = encodings[0]
+        encoding = face_recognition.face_encodings(image_cv2, face_locations)[0]
         encoding_list = [float(x) for x in encoding]
 
         return jsonify({'face_encoding': encoding_list, 'message': 'Face encoded successfully'}), 200
 
     except Exception as e:
         app.logger.error(f"Register-face error: {e}", exc_info=True)
-        return jsonify({'error': f'Register-face gagal: {str(e)}'}), 500
+        return jsonify({'error': 'Internal server error'}), 500
 
-
+# --- API Endpoint: Login ---
 @app.route('/api/login', methods=['POST', 'OPTIONS'])
 def login():
     if request.method == 'OPTIONS':
@@ -215,12 +209,12 @@ def login():
     finally:
         conn.close()
 
-
+# --- API Endpoint: Health check ---
 @app.route('/health', methods=['GET'])
 def health_check():
     return jsonify({'status': 'OK'}), 200
 
-
+# --- Main ---
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
