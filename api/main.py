@@ -18,6 +18,7 @@ app = Flask(__name__)
 
 # List of allowed origins (frontend URLs)
 origins = [
+    "https://facerecognition-attendance-production.up.railway.app",
     "https://face-recognition-attendance-mx7j-9t2fva34u.vercel.app"
 ]
 
