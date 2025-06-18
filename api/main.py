@@ -24,6 +24,8 @@ origins = [
     "https://face-recognition-attendance-mx7j.vercel.app/" 
 ]
 
+CORS(app, resources={r"/*": {"origins": origins}}, supports_credentials=True)
+
 # Konfigurasi Database - Akan membaca DATABASE_URL
 def get_db_connection():
     try:
