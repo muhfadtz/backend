@@ -6,4 +6,5 @@ opencv-python-headless
 numpy
 python-dotenv
 bcrypt
+psycopg2-binary # Pastikan ini ada jika Anda menggunakannya
 gunicorn
