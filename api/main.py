@@ -18,7 +18,11 @@ load_dotenv()
 
 # Inisialisasi Flask app
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "*"}})
+origins = [
+    "http://localhost:3000/",  # Alamat untuk development lokal di komputer Anda
+    # Ganti URL placeholder di bawah ini dengan URL PUBLIK FRONTEND Anda di Railway
+    "https://absensi-frontend-production.up.railway.app/" 
+]
 
 # Konfigurasi Database - Akan membaca DATABASE_URL
 def get_db_connection():
