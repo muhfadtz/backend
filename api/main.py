@@ -12,21 +12,34 @@ import bcrypt
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from dotenv import load_dotenv
+from urllib.parse import urlparse # <--- TAMBAHKAN INI
+
 load_dotenv()
 
 # Inisialisasi Flask app
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})
 
-# Konfigurasi Database
-DB_HOST = os.environ.get("DB_HOST", "HOST")
-DB_NAME = os.environ.get("DB_NAME", "DATABASE")
-DB_USER = os.environ.get("DB_USER", "USERNAME")
-DB_PASS = os.environ.get("DB_PASS", "PASSWORD")
-
+# Konfigurasi Database - Akan membaca DATABASE_URL
 def get_db_connection():
     try:
-        conn = psycopg2.connect(host=DB_HOST, database=DB_NAME, user=DB_USER, password=DB_PASS)
+        # Dapatkan DATABASE_URL dari environment variables
+        database_url = os.environ.get("DATABASE_URL")
+        if not database_url:
+            app.logger.error("Flask: DATABASE_URL environment variable not set.")
+            return None
+
+        # Parsing DATABASE_URL
+        url = urlparse(database_url)
+
+        conn = psycopg2.connect(
+            host=url.hostname,
+            database=url.path[1:], # Menghilangkan '/' di awal path
+            user=url.username,
+            password=url.password,
+            port=url.port if url.port else 5432, # Default port 5432
+            sslmode='require' # Tambahkan ini jika Railway membutuhkan SSL (seringkali iya)
+        )
         return conn
     except psycopg2.Error as e:
         app.logger.error(f"Flask: Error connecting to PostgreSQL: {e}")
@@ -62,14 +75,14 @@ def attendance():
         current_face_encodings = face_recognition.face_encodings(image_cv2, current_face_locations)
         if not current_face_encodings:
             return jsonify({'error': 'Could not create encoding for the current image'}), 400
-        
+
         current_face_encoding = current_face_encodings[0]
 
         # Ambil data wajah dari Database
         conn = get_db_connection()
         if conn is None:
             return jsonify({'error': 'Flask: Could not connect to database for attendance.'}), 503
-        
+
         cursor = conn.cursor(cursor_factory=RealDictCursor)
         known_face_encodings_from_db = []
         known_nips_from_db = []
@@ -89,9 +102,9 @@ def attendance():
                 except (ValueError, TypeError) as e:
                     app.logger.warning(f"Flask: Skipping NIP {row['nip']} due to parsing error in face_embedding: {e}")
                     continue
-            
+
             if not known_face_encodings_from_db:
-                 return jsonify({'error': 'No known faces with valid embeddings found in database'}), 404
+                    return jsonify({'error': 'No known faces with valid embeddings found in database'}), 404
 
             # Lakukan perbandingan
             matches = face_recognition.compare_faces(known_face_encodings_from_db, current_face_encoding, tolerance=0.5)
@@ -176,7 +189,7 @@ def login():
     if email == admin_email and password == admin_password:
         return jsonify({"message": "Login berhasil", "role": "admin"}), 200
 
-    conn = get_db_connection()
+    conn = get_db_connection() # <--- Pastikan ini menggunakan fungsi get_db_connection yang baru
     if conn is None:
         return jsonify({"error": "Tidak bisa konek ke database"}), 503
 
@@ -203,6 +216,7 @@ def login():
             return jsonify({"message": "Email atau password salah"}), 401
 
     except psycopg2.Error as db_err:
+        app.logger.error(f"Flask: Database error during login check: {str(db_err)}")
         return jsonify({"error": f"Database error: {str(db_err)}"}), 500
     finally:
         cursor.close()
