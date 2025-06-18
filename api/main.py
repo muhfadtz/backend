@@ -13,7 +13,7 @@ from psycopg2.extras import RealDictCursor
 from dotenv import load_dotenv
 load_dotenv()
 
-app = Flask(__name__)
+app = Flask(_name_)
 
 # --- Konfigurasi CORS ---
 origins = [
@@ -48,6 +48,7 @@ def get_db_connection():
 # --- Fungsi pemrosesan gambar ---
 def process_image_for_face_recognition(base64_string):
     try:
+        # Menambahkan padding jika diperlukan
         missing_padding = len(base64_string) % 4
         if missing_padding:
             base64_string += '=' * (4 - missing_padding)
@@ -57,10 +58,12 @@ def process_image_for_face_recognition(base64_string):
 
         image_cv2 = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
         if image_cv2 is None:
-            return None, "Image decoding failed"
+            return None, "Gagal memproses data gambar (Image decoding failed)"
 
+        # Konversi ke RGB karena face_recognition menggunakan format RGB
         image_rgb = cv2.cvtColor(image_cv2, cv2.COLOR_BGR2RGB)
 
+        # Resize gambar untuk mempercepat proses dan menghemat memori
         MAX_WIDTH = 800
         height, width = image_rgb.shape[:2]
         if width > MAX_WIDTH:
@@ -119,11 +122,13 @@ def attendance():
                     known_nips.append(row['nip'])
                     known_names.append(row['nama'])
                 except:
+                    # Lewati baris yang encoding-nya corrupt
                     continue
 
             if not known_encodings:
                 return jsonify({'error': 'No known faces to compare'}), 404
 
+            # Bandingkan wajah dengan toleransi yang lebih ketat untuk akurasi
             matches = face_recognition.compare_faces(known_encodings, current_encoding, tolerance=0.5)
             distances = face_recognition.face_distance(known_encodings, current_encoding)
 
@@ -164,7 +169,19 @@ def register_face():
         if len(face_locations) != 1:
             return jsonify({'error': 'Harap gunakan foto dengan 1 wajah saja'}), 400
 
-        encoding = face_recognition.face_encodings(image_cv2, face_locations)[0]
+        # --- PERBAIKAN DIMULAI DI SINI ---
+        # 1. Buat encoding wajah dari lokasi yang ditemukan
+        face_encodings = face_recognition.face_encodings(image_cv2, face_locations)
+
+        # 2. Periksa apakah proses encoding berhasil dan menghasilkan sesuatu
+        if not face_encodings:
+            # Jika list kosong, artinya encoding gagal. Kembalikan error yang informatif.
+            return jsonify({'error': 'Gagal membuat encoding wajah. Coba gunakan foto yang lebih jelas atau dengan pencahayaan lebih baik.'}), 400
+        
+        # 3. Jika berhasil, baru ambil encoding dari elemen pertama
+        encoding = face_encodings[0]
+        # --- AKHIR PERBAIKAN ---
+
         encoding_list = [float(x) for x in encoding]
 
         return jsonify({'face_encoding': encoding_list, 'message': 'Face encoded successfully'}), 200
@@ -189,6 +206,7 @@ def login():
     admin_email = os.getenv('ADMIN_EMAIL')
     admin_password = os.getenv('ADMIN_PASSWORD')
 
+    # Login sebagai Admin (contoh sederhana)
     if email == admin_email and password == admin_password:
         return jsonify({"message": "Login berhasil", "role": "admin"}), 200
 
@@ -200,14 +218,18 @@ def login():
         with conn.cursor(cursor_factory=RealDictCursor) as cursor:
             cursor.execute("SELECT nama, password FROM public.\"Karyawan\" WHERE email = %s", (email,))
             row = cursor.fetchone()
-            if row and bcrypt.checkpw(password.encode(), row['password'].encode()):
+            
+            # Periksa apakah user ada dan password cocok
+            if row and bcrypt.checkpw(password.encode('utf-8'), row['password'].encode('utf-8')):
                 return jsonify({"message": "Login berhasil", "role": "user", "nama": row['nama']}), 200
+            
             return jsonify({"message": "Email atau password salah"}), 401
     except Exception as e:
         app.logger.error(f"Login error: {e}", exc_info=True)
         return jsonify({"error": "Internal server error"}), 500
     finally:
-        conn.close()
+        if conn and not conn.closed:
+            conn.close()
 
 # --- API Endpoint: Health check ---
 @app.route('/health', methods=['GET'])
@@ -215,6 +237,6 @@ def health_check():
     return jsonify({'status': 'OK'}), 200
 
 # --- Main ---
-if __name__ == '__main__':
+if _name_ == '_main_':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
