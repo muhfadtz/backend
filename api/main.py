@@ -13,7 +13,7 @@ from psycopg2.extras import RealDictCursor
 from dotenv import load_dotenv
 load_dotenv()
 
-app = Flask(_name_)
+app = Flask(__name__)
 
 # --- Konfigurasi CORS ---
 origins = [
@@ -48,25 +48,20 @@ def get_db_connection():
 # --- Fungsi pemrosesan gambar ---
 def process_image_for_face_recognition(base64_string):
     try:
-        # Tambahkan padding jika base64 tidak valid
         missing_padding = len(base64_string) % 4
         if missing_padding:
             base64_string += '=' * (4 - missing_padding)
 
-        # Decode dari base64 ke numpy array
         image_data = base64.b64decode(base64_string)
         np_arr = np.frombuffer(image_data, np.uint8)
-
-        # Decode menggunakan OpenCV
         image_cv2 = cv2.imdecode(np_arr, cv2.IMREAD_UNCHANGED)
+
         if image_cv2 is None:
             return None, "Image decoding failed"
 
-        # Konversi jika 4-channel (RGBA/BGRA)
         if len(image_cv2.shape) == 3 and image_cv2.shape[2] == 4:
             image_cv2 = cv2.cvtColor(image_cv2, cv2.COLOR_BGRA2BGR)
 
-        # Resize jika terlalu besar
         MAX_WIDTH = 800
         height, width = image_cv2.shape[:2]
         if width > MAX_WIDTH:
@@ -221,6 +216,6 @@ def health_check():
     return jsonify({'status': 'OK'}), 200
 
 # --- Main ---
-if _name_ == '_main_':
+if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
